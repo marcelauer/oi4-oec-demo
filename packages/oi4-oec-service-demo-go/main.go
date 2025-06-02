@@ -37,7 +37,7 @@ func main() {
 		panic(err)
 	}
 
-	sensorService := sensor.NewSensorService(*appID, sensor.Metric, logger)
+	sensorService := sensor.NewSensorService(*appID, logger)
 
 	assets, err := getAssets(storage.ApplicationSpecificStorages, logger)
 	if err != nil {

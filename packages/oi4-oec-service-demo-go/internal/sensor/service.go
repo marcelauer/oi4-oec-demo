@@ -5,28 +5,35 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"net/http"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
+
+// =============================
+// Adapt these values for debugging with your IOLink Master
+// =============================
+const IOLinkMasterAddress = "http://192.168.1.11"
+
+// =============================
 
 const timeout = 10 * time.Second
 
 type Service struct {
 	IOLinkMasterAddress string
+	logger              *zap.SugaredLogger
 }
 
-func NewSensorService(IOLinkMasterAddress string) *Service {
+func NewSensorService(IOLinkMasterAddress string, logger *zap.SugaredLogger) *Service {
 	return &Service{
 		IOLinkMasterAddress: IOLinkMasterAddress,
+		logger:              logger,
 	}
-}
-
-func (s *Service) SendAcyclicRequests(params []IOLinkParameter) ([]IOLinkAcyclicResponse, error) {
-	requests := CreateAcyclicRequestsForParameters(params)
-	return s.sendAcyclicRequests(requests)
 }
 
 // CreateAcyclicRequestsForParameters creates an acyclic request for each IOLinkParameter.
@@ -45,41 +52,17 @@ func CreateAcyclicRequestsForParameters(params []IOLinkParameter) []IOLinkAcycli
 	return requests
 }
 
-func (s *Service) GetSensorData(params []IOLinkParameter) ([]IOLinkAcyclicResponse, error) {
-	requests := CreateAcyclicRequestsForParameters(params)
-	responses, err := s.sendAcyclicRequests(requests)
-	if err != nil {
-		return nil, err
-	}
-
-	for i, resp := range responses {
-		if resp.Data.Value != "" {
-			decodedValue, decodeErr := DecodeIOLinkValue(resp.Data.Value, params[i].DataType)
-			if decodeErr != nil {
-				return nil, decodeErr
-			}
-			if strVal, ok := decodedValue.(string); ok {
-				resp.Data.Value = strVal
-			} else {
-				resp.Data.Value = ""
-			}
-		}
-	}
-
-	return responses, nil
-}
-
-// sendAcyclicRequests sends each request as a POST REST API call to the IOLinkMasterAddress and returns the responses.
-func (s *Service) sendAcyclicRequests(requests []IOLinkAcyclicRequest) ([]IOLinkAcyclicResponse, error) {
+// SendAcyclicRequests sends each request as a POST REST API call to IP adress of IOLinkMaster and returns the responses.
+func SendAcyclicRequests(requests []IOLinkAcyclicRequest) ([]IOLinkAcyclicResponse, error) {
 	var responses []IOLinkAcyclicResponse
 	var iolResp IOLinkAcyclicResponse
-	client := &http.Client{}
+	client := &http.Client{Timeout: timeout}
 	for _, req := range requests {
 		body, err := json.Marshal(req)
 		if err != nil {
 			return nil, err
 		}
-		httpReq, err := http.NewRequest("POST", s.IOLinkMasterAddress, bytes.NewBuffer(body))
+		httpReq, err := http.NewRequest("POST", IOLinkMasterAddress, bytes.NewBuffer(body))
 		if err != nil {
 			return nil, err
 		}
@@ -104,9 +87,94 @@ func (s *Service) sendAcyclicRequests(requests []IOLinkAcyclicRequest) ([]IOLink
 	return responses, nil
 }
 
+func (s *Service) GetSensorParameterData(params []IOLinkParameter, group string) ([]ResponseValue, error) {
+	requests := CreateAcyclicRequestsForParameters(params)
+	responses, err := SendAcyclicRequests(requests)
+	if err != nil {
+		return nil, err
+	}
+
+	var values []ResponseValue
+
+	for i, resp := range responses {
+		if resp.Data.Value != "" {
+			decodedValue, decodeErr := DecodeIOLinkHexValue(resp.Data.Value, params[i].DataType)
+			if decodeErr != nil {
+				return nil, decodeErr
+			}
+			if strVal, ok := decodedValue.(string); ok {
+				var data = DataDict{
+					Timestamp: time.Now().Unix(),
+					Value:     strVal,
+				}
+				values = append(values, ResponseValue{
+					Key:   params[i].ID,
+					Group: &group,
+					Data:  []DataDict{data},
+				})
+			} else {
+				resp.Data.Value = ""
+			}
+		}
+	}
+	if len(values) == 0 {
+		s.logger.Warn("No valid parameter values for parameter group " + group + " found in the response")
+		return nil, errors.New("No valid parameter values for parameter group " + group + " found in the response")
+	}
+
+	return values, nil
+}
+
+func (s *Service) GetSensorProcessData(unit *string) ([]ResponseValue, error) {
+	var iolResp IOLinkAcyclicResponse
+	var processValue ResponseValue
+	client := &http.Client{Timeout: timeout}
+	req := IOLinkAcyclicRequest{
+		Code: "request",
+		Cid:  4711,
+		Adr:  "/iolinkmaster/port[1]/iolinkdevice/getdata",
+	}
+	body, err := json.Marshal(req)
+	httpReq, err := http.NewRequest("POST", IOLinkMasterAddress, bytes.NewBuffer(body))
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+	}(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if err := json.Unmarshal(respBody, &iolResp); err != nil {
+		return nil, err
+	}
+	if iolResp.Data.Value != "" {
+		decodedValue, decodedErr := DecodeProcessData(iolResp.Data.Value)
+		if decodedErr != nil {
+			return nil, decodedErr
+		}
+		processValue.Key = "Temperature"
+		processValue.Unit.Code = unit
+		processValue.Group = unit
+		processValue.Data = []DataDict{
+			{
+				Timestamp: time.Now().Unix(),
+				Value:     fmt.Sprintf("%v", decodedValue),
+			},
+		}
+	}
+	return []ResponseValue{processValue}, nil
+}
+
 // DecodeIOLinkValue decodes a hex string from the response according to the DataType into the appropriate Go type.
 // Supports Integer, Float32, and ASCII string.
-func DecodeIOLinkValue(hexStr string, dataType string) (interface{}, error) {
+func DecodeIOLinkHexValue(hexStr string, dataType string) (interface{}, error) {
 	data, err := hex.DecodeString(hexStr)
 	if err != nil {
 		return nil, err
@@ -140,5 +208,40 @@ func DecodeIOLinkValue(hexStr string, dataType string) (interface{}, error) {
 		return strings.ReplaceAll(string(data), "\x00", ""), nil
 	default:
 		return hexStr, nil // Fallback: return hex string
+	}
+}
+
+// Decode ProcessData from hex string to float64 temperature value according to the iTherm process data format.
+func DecodeProcessData(hexStr string) (float64, error) {
+	data, err := hex.DecodeString(hexStr)
+	if err != nil {
+		return 0, err
+	}
+	if len(data) < 4 {
+		return 0, errors.New("not enough bytes for process data")
+	}
+
+	// Temperature: Bytes 0 und 1 (Big Endian, sint16)
+	tempRaw := int16(data[0])<<8 | int16(data[1])
+	temperature := float64(tempRaw) / 10.0
+	// Scale: Byte 2 (int8)
+	//scale := int8(data[2]) is always 10^-1, so we can ignore it
+	// Status and Switch State: Byte 3 (uint8)
+	// status := (data[3] >> 1) & 0x07
+	// switchState := data[3] & 0x01
+
+	return temperature, nil
+}
+
+func (u SensorUnit) UnitToString() string {
+	switch u {
+	case Celsius:
+		return "°C"
+	case Fahrenheit:
+		return "°F"
+	case Kelvin:
+		return "K"
+	default:
+		return "°C"
 	}
 }

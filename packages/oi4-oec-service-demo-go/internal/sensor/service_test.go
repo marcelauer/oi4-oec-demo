@@ -18,7 +18,7 @@ func TestCreateAcyclicRequestsForParameters(t *testing.T) {
 }
 
 func TestDecodeIOLinkValue_Integer(t *testing.T) {
-	val, err := DecodeIOLinkValue("0A", "UIntegerT(8)")
+	val, err := DecodeIOLinkHexValue("0A", "UIntegerT(8)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +29,7 @@ func TestDecodeIOLinkValue_Integer(t *testing.T) {
 
 func TestDecodeIOLinkValue_Float32(t *testing.T) {
 	// 0x0000803F == 1.0 in float32 (little endian: 3F800000)
-	val, err := DecodeIOLinkValue("0000803F", "Float32T")
+	val, err := DecodeIOLinkHexValue("0000803F", "Float32T")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestDecodeIOLinkValue_Float32(t *testing.T) {
 }
 
 func TestDecodeIOLinkValue_String(t *testing.T) {
-	val, err := DecodeIOLinkValue("69544845524D20436F6D706163744C696E6520544D3331310000000000000000", "StringT(16)")
+	val, err := DecodeIOLinkHexValue("69544845524D20436F6D706163744C696E6520544D3331310000000000000000", "StringT(16)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,5 +57,36 @@ func TestSendAcyclicRequests_Signature(t *testing.T) {
 	_, err := SendAcyclicRequests(reqs)
 	if err != nil && err.Error() != "Post \"http://192.168.1.11\": unsupported protocol scheme \"\"" {
 		// Error is ok as long as the function is callable
+	}
+}
+
+func TestDecodeProcessData(t *testing.T) {
+	// Example: 0x00FA = 250 (25.0°C), scale -1, status 0, switch 0
+	hexStr := "00faff00"
+	val, err := DecodeProcessData(hexStr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected := 25.0
+	if val != expected {
+		t.Errorf("expected %v, got %v", expected, val)
+	}
+
+	// Negative temperature: 0xFF38 = -200 (should be -20.0°C)
+	hexStr = "ff38ff00"
+	val, err = DecodeProcessData(hexStr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expected = -20.0
+	if val != expected {
+		t.Errorf("expected %v, got %v", expected, val)
+	}
+
+	// Not enough bytes
+	hexStr = "00fa"
+	_, err = DecodeProcessData(hexStr)
+	if err == nil {
+		t.Error("expected error for short input, got nil")
 	}
 }

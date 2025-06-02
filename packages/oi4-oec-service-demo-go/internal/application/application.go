@@ -12,6 +12,24 @@ import (
 	"go.uber.org/zap"
 )
 
+// ==================================
+// Debugging
+// ==================================
+// Use values from according IODD file of your sensor (https://ioddfinder.io-link.com/)
+var DebugParameter = []sensor.IOLinkParameter{
+	{
+		ID:           "DebugParameter",        // identifier for the parameter
+		Index:        123,                     // Index in the IODD
+		AccessRights: "ro",                    // Access rights, e.g. "rw" for read/write, "ro" for read-only
+		DataType:     "UIntegerT(16)",         // Data type, e.g. "UIntegerT(8)", "Float32T", "StringT(16)"
+		DefaultValue: "",                      // Default value, e.g. "0" for integers, "0.0" for floats, or "" for strings
+		Name:         "Device type",           // Name of the parameter
+		Description:  "Shows the device type", // Description of the parameter
+	},
+}
+
+// ==================================
+
 type SensorApplication struct {
 	*application.Oi4ApplicationImpl
 	applicationSource *source.ApplicationSourceImpl
@@ -100,7 +118,8 @@ func (app *SensorApplication) getSensorData(asset Asset, filter *api.Filter) []a
 		return nil
 	}
 
-	response, rErr := app.sensorService.GetSensorData()
+	unit := "°C"
+	response, rErr := app.sensorService.GetSensorProcessData(&unit)
 
 	if rErr != nil {
 		app.logger.Warn("Failed to get sensor data:", rErr)
@@ -108,9 +127,22 @@ func (app *SensorApplication) getSensorData(asset Asset, filter *api.Filter) []a
 		return nil
 	}
 
-	data := api.NewOi4Data(response)
+	pv := api.NewOi4Data(response)
+	app.applicationSource.UpdateData(pv, "eh_values")
+	app.applicationSource.UpdateHealth(api.Health{Health: api.Health_Normal, HealthScore: 100})
 
-	return []api.Data{data}
+	// Get sensor parameters
+	// TODO: should be tested with a real sensor before adding all parameters
+	//response_parametersSensor, rErr := app.sensorService.GetSensorParameterData(parametersSensor, "Sensor Parameters")
+	response_parametersSensor, rErr := app.sensorService.GetSensorParameterData(DebugParameter, "Debug Parameter")
+	if rErr != nil {
+		app.logger.Warn("Failed to get sensor parameters:", rErr)
+
+		return nil
+	}
+	parSensor := api.NewOi4Data(response_parametersSensor)
+
+	return []api.Data{pv, parSensor}
 }
 
 func newDataPublication(application api.Oi4Application, oi4Source api.BaseSource) *publication.IntervalPublicationImpl {
