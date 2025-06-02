@@ -1,32 +1,33 @@
 package application
 
 import (
-	"github.com/OI4/oi4-oec-demo/internal/weather"
+	"IOLinkConnect/internal/sensor"
+	"time"
+
 	"github.com/OI4/oi4-oec-service-go/service/api"
 	"github.com/OI4/oi4-oec-service-go/service/application"
 	"github.com/OI4/oi4-oec-service-go/service/application/publication"
 	"github.com/OI4/oi4-oec-service-go/service/application/source"
 	"github.com/OI4/oi4-oec-service-go/service/container"
 	"go.uber.org/zap"
-	"time"
 )
 
-type WeatherApplication struct {
+type SensorApplication struct {
 	*application.Oi4ApplicationImpl
 	applicationSource *source.ApplicationSourceImpl
 	mam               api.MasterAssetModel
 	assets            map[string]AssetsEntry
 	storage           *container.Storage
-	weatherService    *weather.Service
+	sensorService     *sensor.Service
 	logger            *zap.SugaredLogger
 }
 
-func NewWeatherApplication(
+func NewSensorApplication(
 	mam api.MasterAssetModel,
 	storage *container.Storage,
-	weatherService *weather.Service,
+	sensorService *sensor.Service,
 	logger *zap.SugaredLogger,
-) *WeatherApplication {
+) *SensorApplication {
 	applicationSource := source.NewApplicationSourceImpl(mam)
 	oi4Application, err := application.CreateNewApplication(api.ServiceTypeOTConnector, applicationSource, logger)
 
@@ -37,29 +38,29 @@ func NewWeatherApplication(
 
 	assets := make(map[string]AssetsEntry)
 
-	return &WeatherApplication{
+	return &SensorApplication{
 		oi4Application,
 		applicationSource,
 		mam,
 		assets,
 		storage,
-		weatherService,
+		sensorService,
 		logger,
 	}
 }
 
-func (app *WeatherApplication) AddAssets(assetList []Asset) {
+func (app *SensorApplication) AddAssets(assetList []Asset) {
 	for _, asset := range assetList {
 		app.AddAsset(asset)
 	}
 }
 
-func (app *WeatherApplication) AddAsset(asset Asset) {
+func (app *SensorApplication) AddAsset(asset Asset) {
 	key := asset.ToOi4Identifier().ToString()
 
 	option := source.WithDataFn(
 		func(_ api.BaseSource, filter *api.Filter) []api.Data {
-			return app.getWeatherData(asset, filter)
+			return app.getSensorData(asset, filter)
 		},
 	)
 
@@ -94,33 +95,20 @@ func (app *WeatherApplication) AddAsset(asset Asset) {
 	app.assets[key] = assetEntry
 }
 
-func (app *WeatherApplication) getWeatherData(asset Asset, filter *api.Filter) []api.Data {
+func (app *SensorApplication) getSensorData(asset Asset, filter *api.Filter) []api.Data {
 	if filter != nil && !api.FilterEquals(filter, api.NewFilter("Oi4Data")) {
 		return nil
 	}
 
-	lat := asset.Location.Latitude
-	lon := asset.Location.Longitude
-	response, rErr := app.weatherService.GetWeather(weather.Coordinates{Lon: lon, Lat: lat}, "en")
+	response, rErr := app.sensorService.GetSensorData()
 
 	if rErr != nil {
-		app.logger.Warn("Failed to get weather data:", rErr)
+		app.logger.Warn("Failed to get sensor data:", rErr)
 
 		return nil
 	}
 
-	data := api.NewOi4Data(response.Main.Temp)
-
-	addValue := func(key string, value any) {
-		dErr := data.AddSecondaryData(key, &value)
-
-		if dErr != nil {
-			app.logger.Warn("Failed to add secondary data:", dErr)
-		}
-	}
-
-	addValue("Sv1", response.Main.Pressure)
-	addValue("Sv2", response.Main.Humidity)
+	data := api.NewOi4Data(response)
 
 	return []api.Data{data}
 }

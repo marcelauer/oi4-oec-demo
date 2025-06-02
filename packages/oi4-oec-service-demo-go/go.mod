@@ -1,4 +1,4 @@
-module github.com/OI4/oi4-oec-demo
+module IOLinkConnect
 
 go 1.24.2
 

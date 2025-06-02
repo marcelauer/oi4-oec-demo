@@ -1,20 +1,21 @@
 package main
 
 import (
+	"IOLinkConnect/internal/application"
+	"IOLinkConnect/internal/sensor"
 	"bytes"
 	"encoding/json"
 	"flag"
-	"github.com/OI4/oi4-oec-demo/internal/application"
-	"github.com/OI4/oi4-oec-demo/internal/weather"
-	"github.com/OI4/oi4-oec-service-go/service/api"
-	"github.com/OI4/oi4-oec-service-go/service/container"
-	"go.uber.org/zap"
 	"io"
 	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	"github.com/OI4/oi4-oec-service-go/service/api"
+	"github.com/OI4/oi4-oec-service-go/service/container"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -32,11 +33,11 @@ func main() {
 	if err != nil {
 		wd, _ := os.Getwd()
 		logger.Info("Working directory:", wd)
-		logger.Fatal("Failed to retrieve weather app id:", err)
+		logger.Fatal("Failed to retrieve sensor app id:", err)
 		panic(err)
 	}
 
-	weatherService := weather.NewService(*appID, weather.Metric, logger)
+	sensorService := sensor.NewSensorService(*appID, sensor.Metric, logger)
 
 	assets, err := getAssets(storage.ApplicationSpecificStorages, logger)
 	if err != nil {
@@ -44,7 +45,7 @@ func main() {
 		panic(err)
 	}
 
-	app := application.NewWeatherApplication(*mam, storage, weatherService, logger)
+	app := application.NewSensorApplication(*mam, storage, sensorService, logger)
 	app.AddAssets(assets)
 
 	if err = app.Start(*storage); err != nil {
