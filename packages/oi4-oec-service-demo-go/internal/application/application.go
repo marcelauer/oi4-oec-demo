@@ -78,7 +78,7 @@ func (app *SensorApplication) AddAsset(asset Asset) {
 
 	option := source.WithDataFn(
 		func(_ api.BaseSource, filter *api.Filter) []api.Data {
-			return app.getSensorData(asset, filter)
+			return app.getSensorData(filter)
 		},
 	)
 
@@ -113,7 +113,7 @@ func (app *SensorApplication) AddAsset(asset Asset) {
 	app.assets[key] = assetEntry
 }
 
-func (app *SensorApplication) getSensorData(asset Asset, filter *api.Filter) []api.Data {
+func (app *SensorApplication) getSensorData(filter *api.Filter) []api.Data {
 	if filter != nil && !api.FilterEquals(filter, api.NewFilter("Oi4Data")) {
 		return nil
 	}
